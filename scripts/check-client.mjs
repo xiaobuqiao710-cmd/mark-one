@@ -82,6 +82,24 @@ const kind = routeOf(entry, /const KIND = '([^']+)'/)
 expect(entry.includes("key: KIND"), 'src/client/index.js: sidebar.right.pane.tab 的 key 应该是 KIND')
 expect(entry.includes(`name: 'sidebar.right.pane.tab'`), 'src/client/index.js: 没有注册 sidebar.right.pane.tab')
 
+// 6. package.json 的浏览器声明与产物，要和 client-modules 的加载条件对上。
+//    （`dsh.client` 在而 `exports["./client"]` 不在 → 直接抛错；产物不存在 → 运行时 404）
+const pkg = JSON.parse(await read('package.json'))
+expect(pkg.dsh?.client?.platform === 'web', `package.json: dsh.client.platform 应为 "web"，实际 ${pkg.dsh?.client?.platform}`)
+const clientExport = pkg.exports?.['./client']
+expect(typeof clientExport === 'string', 'package.json: exports["./client"] 必须是字符串')
+if (typeof clientExport === 'string') {
+  const artifact = await read(clientExport.replace(/^\.\//, '')).catch(() => undefined)
+  expect(artifact !== undefined, `package.json: exports["./client"] 指向的 ${clientExport} 不存在（先 npm run build）`)
+  if (artifact !== undefined) {
+    expect(artifact.includes('__ModuleLoader__.load'), `${clientExport} 不是 __ModuleLoader__.load 产物`)
+    expect(artifact.includes(`id: "${pkg.name}"`), `${clientExport} 里的 id 与包名 ${pkg.name} 不一致`)
+    for (const match of artifact.matchAll(/require\("([^"]+)"\)/g)) {
+      expect(allowed.has(match[1]), `${clientExport} 里 require 了白名单外的模块：${match[1]}`)
+    }
+  }
+}
+
 if (problems.length > 0) {
   console.error('check-client: 发现 %d 个问题', problems.length)
   for (const problem of problems) console.error(' -', problem)
