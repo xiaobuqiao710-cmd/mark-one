@@ -8,8 +8,8 @@
 
 本项目的设计不是凭空来的，它直接建立在两份材料上：
 
-- **Obsidian 剪藏《Super-agent 设计探索：迈向更自主的 Agent 系统》** —— 提供四个设计目标（连续、高效、主动、持久）与五个核心模块（双层架构、事件驱动的任务流、面向人的交互层、计算状态与环境状态分离、Watchdog 机制）。
-- **[deepseek-ai/dsh-superagent-prototype](https://github.com/deepseek-ai/dsh-superagent-prototype)** —— 提供领域模型 `Source → Trigger → Thread → Eval → Ticket → Mandate → Assignment`，以及「票据即上下文边界」的工程化取舍。
+- **DeepSeek Harness 官方团队文章《Super-agent 设计探索：迈向更自主的 Agent 系统》** —— 提供四个设计目标（连续、高效、主动、持久）与五个核心模块（双层架构、事件驱动的任务流、面向人的交互层、计算状态与环境状态分离、Watchdog 机制）。本文是本项目的概念来源。
+- **[deepseek-ai/dsh-superagent-prototype](https://github.com/deepseek-ai/dsh-superagent-prototype)** —— 同一团队的工程原型，提供领域模型 `Source → Trigger → Thread → Eval → Ticket → Mandate → Assignment`，以及「票据即上下文边界」的工程化取舍。本项目的代码结构以它为参照。
 
 本仓库把它们落成一个可以直接装进 DSH 的 bundle：**一个主插件 + 三个 agent 预设 + 一个场景包**。
 
