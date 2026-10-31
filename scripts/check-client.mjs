@@ -82,6 +82,21 @@ const kind = routeOf(entry, /const KIND = '([^']+)'/)
 expect(entry.includes("key: KIND"), 'src/client/index.js: sidebar.right.pane.tab 的 key 应该是 KIND')
 expect(entry.includes(`name: 'sidebar.right.pane.tab'`), 'src/client/index.js: 没有注册 sidebar.right.pane.tab')
 
+// 5b. 光有 pane.tab 不够：openTab(kind) 会先查 tab 类型注册表，没有就抛
+//     `sidebarRight: no tab type is registered as "<kind>"`，按钮点了毫无反应。
+expect(
+  /ctx\.sidebarRightTabs\.register\(\{[\s\S]*?kind:\s*KIND/.test(entry),
+  `src/client/index.js: 没有 ctx.sidebarRightTabs.register({ kind: KIND })，打开 ${kind} 会抛 no tab type is registered`
+)
+expect(
+  /const inject = \[[^\]]*'sidebarRightTabs'/.test(entry),
+  "src/client/index.js: inject 缺少 'sidebarRightTabs'"
+)
+expect(
+  /const inject = \[[^\]]*'sidebarRight'/.test(entry),
+  "src/client/index.js: inject 缺少 'sidebarRight'"
+)
+
 // 6. package.json 的浏览器声明与产物，要和 client-modules 的加载条件对上。
 //    （`dsh.client` 在而 `exports["./client"]` 不在 → 直接抛错；产物不存在 → 运行时 404）
 const pkg = JSON.parse(await read('package.json'))

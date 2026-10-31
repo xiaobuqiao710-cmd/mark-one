@@ -344,6 +344,25 @@ export const CSS = `
 .mark1-scene-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
 .mark1-scene-name { color: var(--dsw-alias-label-primary); }
 .mark1-scene-desc { color: var(--dsw-alias-label-tertiary); font-size: 11px; }
+
+/* 会话头那颗按钮：与官方 jobs 按钮同形态；打不开看板时转成错误色。 */
+.mark1-header-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 3px 8px;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+  background: transparent;
+  border: 0;
+  border-radius: var(--dsw-radius-sm);
+  cursor: pointer;
+}
+.mark1-header-trigger:hover { background: var(--dsw-alias-fill-l1); color: var(--dsw-alias-label-secondary); }
+.mark1-header-trigger[data-failed="true"] { color: var(--dsw-alias-state-error-primary); }
 `
 
 /**

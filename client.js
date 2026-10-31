@@ -429,7 +429,7 @@ exports.installStyles = installStyles;
  * @module mark1/client
  */
 
-const { createElement } = require("react");
+const { createElement, useState } = require("react");
 const primitives = require("@deepseek-ai/dsh-client-ui-primitives");
 const { installStyles } = __m("board");
 const { Mark1Board } = __m("board");
@@ -441,7 +441,7 @@ const KIND = 'mark1-board'
 const NS = 'mark1'
 
 /** 注入的服务名。客户端插件只看得到这几个。 */
-const inject = ['slots', 'locale']
+const inject = ['slots', 'locale', 'sidebarRight', 'sidebarRightTabs']
 
 /**
  * 客户端插件入口。
@@ -450,16 +450,28 @@ const inject = ['slots', 'locale']
 function apply(ctx) {
   installStyles()
 
+  // 右栏的 tab 类型注册表。不做这一步，openTab(KIND) 会抛
+  // `sidebarRight: no tab type is registered as "mark1-board"`。
+  ctx.effect(() => ctx.sidebarRightTabs.register({
+    id: KIND,
+    kind: KIND,
+    title: () => '马克一号'
+  }), 'mark1: sidebar tab type')
+
+  /**
+   * 打开看板。返回空串表示成功，否则返回失败原因（按钮拿它显示，不再静默）。
+   * @param {string | undefined} sessionId - 当前会话。
+   */
   const openBoard = (sessionId) => {
-    const sidebar = ctx.get('sidebarRight')
-    if (sidebar === undefined) return
+    const sidebar = ctx.sidebarRight
     try {
       if (sessionId === undefined) sidebar.openTab(KIND)
       else sidebar.openTabIn(sessionId, KIND)
-      if (sidebar.isExpanded?.() !== true) sidebar.toggleExpanded?.()
-    } catch {
-      /* 没有挂载会话面板时宿主会抛；静默，因为按钮所在会话一定挂载了 */
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error)
     }
+    if (sidebar.isExpanded() !== true) sidebar.toggleExpanded()
+    return ''
   }
 
   // 会话头按钮：进得了看板的第一入口。
@@ -512,12 +524,14 @@ function apply(ctx) {
  */
 function HeaderButton({ openBoard, primitives }) {
   const { IconGoalOutlineRegular } = primitives
+  const [failure, setFailure] = useState('')
   return createElement('button', {
     type: 'button',
     className: 'mark1-header-trigger',
-    title: '马克一号看板',
+    'data-failed': failure === '' ? undefined : 'true',
+    title: failure === '' ? '马克一号看板' : `马克一号看板打不开：${failure}`,
     'aria-label': '马克一号看板',
-    onClick: () => openBoard()
+    onClick: () => setFailure(openBoard())
   },
     createElement(IconGoalOutlineRegular, { size: 14 }),
     createElement('span', { className: 'mark1-header-label' }, '马克一号')
@@ -952,6 +966,25 @@ const CSS = `
 .mark1-scene-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
 .mark1-scene-name { color: var(--dsw-alias-label-primary); }
 .mark1-scene-desc { color: var(--dsw-alias-label-tertiary); font-size: 11px; }
+
+/* 会话头那颗按钮：与官方 jobs 按钮同形态；打不开看板时转成错误色。 */
+.mark1-header-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 3px 8px;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+  background: transparent;
+  border: 0;
+  border-radius: var(--dsw-radius-sm);
+  cursor: pointer;
+}
+.mark1-header-trigger:hover { background: var(--dsw-alias-fill-l1); color: var(--dsw-alias-label-secondary); }
+.mark1-header-trigger[data-failed="true"] { color: var(--dsw-alias-state-error-primary); }
 `
 
 /**

@@ -13,7 +13,7 @@
  * @module mark1/client
  */
 
-import { createElement } from 'react'
+import { createElement, useState } from 'react'
 import * as primitives from '@deepseek-ai/dsh-client-ui-primitives'
 import { installStyles } from './board.js'
 import { Mark1Board } from './board.js'
@@ -25,7 +25,7 @@ export const KIND = 'mark1-board'
 const NS = 'mark1'
 
 /** 注入的服务名。客户端插件只看得到这几个。 */
-export const inject = ['slots', 'locale']
+export const inject = ['slots', 'locale', 'sidebarRight', 'sidebarRightTabs']
 
 /**
  * 客户端插件入口。
@@ -34,16 +34,28 @@ export const inject = ['slots', 'locale']
 export function apply(ctx) {
   installStyles()
 
+  // 右栏的 tab 类型注册表。不做这一步，openTab(KIND) 会抛
+  // `sidebarRight: no tab type is registered as "mark1-board"`。
+  ctx.effect(() => ctx.sidebarRightTabs.register({
+    id: KIND,
+    kind: KIND,
+    title: () => '马克一号'
+  }), 'mark1: sidebar tab type')
+
+  /**
+   * 打开看板。返回空串表示成功，否则返回失败原因（按钮拿它显示，不再静默）。
+   * @param {string | undefined} sessionId - 当前会话。
+   */
   const openBoard = (sessionId) => {
-    const sidebar = ctx.get('sidebarRight')
-    if (sidebar === undefined) return
+    const sidebar = ctx.sidebarRight
     try {
       if (sessionId === undefined) sidebar.openTab(KIND)
       else sidebar.openTabIn(sessionId, KIND)
-      if (sidebar.isExpanded?.() !== true) sidebar.toggleExpanded?.()
-    } catch {
-      /* 没有挂载会话面板时宿主会抛；静默，因为按钮所在会话一定挂载了 */
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error)
     }
+    if (sidebar.isExpanded() !== true) sidebar.toggleExpanded()
+    return ''
   }
 
   // 会话头按钮：进得了看板的第一入口。
@@ -96,12 +108,14 @@ export function apply(ctx) {
  */
 function HeaderButton({ openBoard, primitives }) {
   const { IconGoalOutlineRegular } = primitives
+  const [failure, setFailure] = useState('')
   return createElement('button', {
     type: 'button',
     className: 'mark1-header-trigger',
-    title: '马克一号看板',
+    'data-failed': failure === '' ? undefined : 'true',
+    title: failure === '' ? '马克一号看板' : `马克一号看板打不开：${failure}`,
     'aria-label': '马克一号看板',
-    onClick: () => openBoard()
+    onClick: () => setFailure(openBoard())
   },
     createElement(IconGoalOutlineRegular, { size: 14 }),
     createElement('span', { className: 'mark1-header-label' }, '马克一号')
