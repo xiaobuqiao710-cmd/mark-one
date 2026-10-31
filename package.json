@@ -1,27 +1,37 @@
 {
   "name": "@local/dsh-mark-one-v5",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
-  "description": "马克一号：通用 super-agent 底座 —— 常驻 Router + 隔离 Worker + 事件驱动触发 + 记忆中台。",
+  "description": "马克一号：通用 super-agent 底座 —— 常驻 Router + 隔离 Worker + 事件驱动触发 + 记忆中台，带浏览器端工单看板。",
   "exports": {
     ".": "./index.js",
+    "./client": "./client.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./locale/*.json": "./locale/*.json",
     "./package.json": "./package.json"
   },
   "files": [
-    "icon.svg",
     "index.js",
     "scenes.js",
+    "client.js",
     "cordis.patch.yml",
-    "locale/*.json",
-    "skills/**"
+    "locale/",
+    "skills/",
+    "icon.svg",
+    "README.md"
   ],
   "dsh": {
+    "client": {
+      "platform": "web"
+    },
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
+  },
+  "scripts": {
+    "build": "node scripts/build-client.mjs",
+    "check": "node scripts/build-client.mjs && node scripts/check-client.mjs"
   },
   "icon": "./icon.svg"
 }

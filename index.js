@@ -39,7 +39,7 @@ import { mountScenes } from './scenes.js'
 export const name = 'dsh-mark-one'
 
 /** Services this plugin consumes. */
-export const inject = ['tools', 'systemPrompt', 'sessionController']
+export const inject = ['tools', 'systemPrompt', 'sessionController', 'connection']
 
 /** Router / Worker / Watchdog 三个预设 id（与 cordis.patch.yml 保持一致）。 */
 const ROUTER_PRESET = 'mark1-router'
@@ -60,6 +60,12 @@ const BLACKBOARD = {
   report: 'report.md',
   status: 'mark1-status.json'
 }
+
+/** 浏览器端看板的数据接口（精确 Fetch 路由，只有 owner 能调）。 */
+const UI_ROUTE = '/api/mark1'
+
+/** 看板一次最多读多少字黑板文件；超出截断并标记。 */
+const BOARD_TEXT_LIMIT = 24_000
 
 /** 默认值；config 里的同名字段覆盖。 */
 const DEFAULTS = {
@@ -172,8 +178,6 @@ export function apply(ctx, rawConfig) {
     runtime.proactiveBudget.clear()
   }, 'mark1.runtime')
 
-  if (typeof globalThis !== 'undefined') (globalThis.__mark1Probe ??= []).push({ at: Date.now(), step: 'apply-entered', pid: process.pid })
-
   // 场景包 → 每个 agent 技能层上的运行时技能（正文来自 skills/<id>/SKILL.md）。
   mountScenes(ctx, config.scenes, SCENES_DIR)
 
@@ -184,6 +188,7 @@ export function apply(ctx, rawConfig) {
   }
 
   registerTools(ctx, config, runtime)
+  registerUiRoute(ctx, config, runtime)
 
   ctx.effect(() => {
     void runtime.load()
@@ -416,6 +421,208 @@ function registerTools(ctx, config, runtime) {
       await kick(ctx, sessionId, args.message)
       return { ticket: ticket?.ticket ?? args.ticket, sessionId, woken: true }
     }
+  })
+}
+
+/**
+ * 浏览器端看板的数据通道：一条精确 Fetch 路由 `/api/mark1`。
+ *
+ * 为什么用 `connection.fetch` 而不是 typert RPC：宿主只把这个精确路由交给 owner
+ * 会话（非 owner 403），而我们需要的全部是「读工单表 / 读黑板文件 / 把一句话投给
+ * 某个会话」，没有一份需要生成的类型契约。ds-bot 走的是同一条路。
+ *
+ * 信封照 ds-bot：`{ ok: true, value }` | `{ ok: false, error: { code, message, details } }`。
+ * 注册必须包在 `ctx.effect` 里 —— 精确路由重复注册会直接抛错，而这个插件是
+ * `patchReload: live` 的。
+ *
+ * @param ctx - Context owning `connection` and `sessionController`.
+ * @param config - Normalized config.
+ * @param runtime - Shared runtime state.
+ */
+function registerUiRoute(ctx, config, runtime) {
+  ctx.effect(() => ctx.connection.fetch.register({
+    path: UI_ROUTE,
+    methods: ['POST'],
+    requestBody: 'buffered',
+    fetch: async (request) => {
+      let body
+      try {
+        body = await request.json()
+      } catch {
+        return json(uiFail('mark1/bad-json', 'request body is not JSON'))
+      }
+      try {
+        const value = await serveUi(ctx, config, runtime, body?.endpoint, body?.payload ?? null)
+        return json({ ok: true, value })
+      } catch (error) {
+        const code = typeof error?.code === 'string' ? error.code : 'mark1/error'
+        return json(uiFail(code, error instanceof Error ? error.message : String(error)))
+      }
+    }
+  }), 'mark1.ui-route')
+}
+
+/**
+ * 分派一个看板端点。
+ * @param ctx - Owning context.
+ * @param config - Normalized config.
+ * @param runtime - Shared runtime state.
+ * @param endpoint - Endpoint name from the browser.
+ * @param payload - Endpoint payload.
+ * @returns the envelope value.
+ */
+async function serveUi(ctx, config, runtime, endpoint, payload) {
+  switch (endpoint) {
+    case 'board':
+      return boardSnapshot(config, runtime, payload?.sessionId)
+    case 'file':
+      return readBlackboard(config, runtime, payload?.ticket, payload?.file)
+    case 'wake': {
+      const ticket = findTicket(runtime, payload?.ticket)
+      const agent = await resolveAgent(ctx, ticket.sessionId)
+      if (agent === void 0) throw fail('mark1/not-found', `会话 ${ticket.sessionId} 不在线，无法唤醒`)
+      ticket.state = 'active'
+      ticket.lastReport = void 0
+      ticket.wokenAt = nowIso()
+      await runtime.persist()
+      await kick(ctx, ticket.sessionId, String(payload?.message ?? '').trim() || '继续。')
+      return { ticket: ticket.ticket, state: ticket.state }
+    }
+    case 'stop': {
+      const ticket = findTicket(runtime, payload?.ticket)
+      await ctx.sessionController.cancel({ sessionId: ticket.sessionId })
+      ticket.state = 'blocked'
+      ticket.stoppedAt = nowIso()
+      ticket.lastReport = {
+        state: 'blocked',
+        summary: '从看板上手动停止。',
+        files: [],
+        next: void 0,
+        at: nowIso(),
+        by: 'board'
+      }
+      await runtime.persist()
+      const router = await resolveAgent(ctx, ticket.router)
+      if (router !== void 0) {
+        await deliver(ctx, router, `## ${ticket.title}（${ticket.ticket}）：已从看板停止\n\nWorker 会话 ${ticket.sessionId} 已取消。需要继续就在看板上「追加指令」，或派新工单。`)
+      }
+      return { ticket: ticket.ticket, state: ticket.state }
+    }
+    case 'rename': {
+      const ticket = findTicket(runtime, payload?.ticket)
+      const title = String(payload?.title ?? '').trim()
+      if (title.length === 0) throw fail('mark1/bad-request', '标题不能为空')
+      ticket.title = title
+      await runtime.persist()
+      try {
+        await ctx.sessionController.rename({ sessionId: ticket.sessionId, title: `马克一号 · ${title}` })
+      } catch {
+        /* 会话不在线时改本地标题就够 */
+      }
+      return { ticket: ticket.ticket, title }
+    }
+    default:
+      throw fail('mark1/unknown-endpoint', `未知端点：${String(endpoint)}`)
+  }
+}
+
+/**
+ * 看板快照。只读 runtime，不碰磁盘（tickets.json 已经 load 进内存）。
+ * @param config - Normalized config.
+ * @param runtime - Shared runtime state.
+ * @param sessionId - 看板所在会话；用来标出「本会话是路由」。
+ * @returns the board value.
+ */
+function boardSnapshot(config, runtime, sessionId) {
+  const router = runtime.routerSessionId ?? ROUTER_SESSION
+  return {
+    router,
+    routerActive: sessionId === router,
+    watchdog: config.watchdogMinutes > 0 ? WATCHDOG_SESSION : void 0,
+    stateDir: config.stateDir,
+    maxTickets: config.maxTickets,
+    watchdogMinutes: config.watchdogMinutes,
+    scenes: config.scenes.map((s) => ({ id: s.id, name: s.name, description: s.description })),
+    tickets: runtime.tickets.map((t) => ({
+      ticket: t.ticket,
+      title: t.title,
+      state: t.state,
+      scene: t.scene,
+      sessionId: t.sessionId,
+      router: t.router,
+      directory: t.directory,
+      createdAt: t.createdAt,
+      lastReport: t.lastReport
+    }))
+  }
+}
+
+/**
+ * 读一张工单目录里的黑板文件。
+ * @param config - Normalized config.
+ * @param runtime - Shared runtime state.
+ * @param ticketId - Ticket id or session id.
+ * @param name - Blackboard file name.
+ * @returns `{ file, text, truncated }`.
+ */
+async function readBlackboard(config, runtime, ticketId, name) {
+  const ticket = findTicket(runtime, ticketId)
+  const allowed = Object.values(BLACKBOARD)
+  if (!allowed.includes(name)) throw fail('mark1/bad-request', `只能读 ${allowed.join(' / ')}`)
+  const path = join(ticket.directory, name)
+  let text
+  try {
+    text = await readFile(path, 'utf8')
+  } catch {
+    return { file: name, text: '', truncated: false }
+  }
+  const truncated = text.length > BOARD_TEXT_LIMIT
+  return { file: name, text: truncated ? text.slice(0, BOARD_TEXT_LIMIT) : text, truncated }
+}
+
+/**
+ * 按 ticket id 或 session id 找工单。
+ * @param runtime - Shared runtime state.
+ * @param id - Ticket or session id.
+ * @returns the ticket.
+ */
+function findTicket(runtime, id) {
+  const ticket = runtime.tickets.find((t) => t.ticket === id || t.sessionId === id)
+  if (ticket === void 0) throw fail('mark1/not-found', `找不到工单：${String(id)}`)
+  return ticket
+}
+
+/**
+ * 造一个带 code 的错误，供信封使用。
+ * @param code - Machine code.
+ * @param message - Human message.
+ * @returns an Error carrying `code`.
+ */
+function fail(code, message) {
+  const error = new Error(message)
+  error.code = code
+  return error
+}
+
+/**
+ * 失败信封。
+ * @param code - Machine code.
+ * @param message - Human message.
+ * @returns the envelope.
+ */
+function uiFail(code, message) {
+  return { ok: false, error: { code, message, details: {} } }
+}
+
+/**
+ * JSON 响应。
+ * @param value - Envelope.
+ * @returns a Response.
+ */
+function json(value) {
+  return new Response(JSON.stringify(value), {
+    status: 200,
+    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }
   })
 }
 

@@ -78,6 +78,41 @@
 - 主动续推有预算：`proactiveRounds`（默认 12），防止 agent 自我加速跑飞。
 - Watchdog 只读黑板 + 写 `watchdog.md`，失败是 best-effort，不影响主流程。
 
+## 看板（浏览器端 UI）
+
+工具是给 agent 用的，看板是给人用的。装好之后界面上多两样东西：
+
+- **会话头按钮「马克一号」**：在任意会话的右上角操作区，点一下就在右栏打开看板。
+- **右栏整页看板 tab**：标题「马克一号」，内容每 3 秒静默刷新一次，切回前台立即拉。
+
+看板里能看到和做到：
+
+| 区域 | 内容 |
+|---|---|
+| 顶部 meta | 路由会话 / 看门狗会话（点 id 直接跳过去）/ 活跃·上限 / 场景包数 / 状态目录 |
+| 工单卡片 | 状态点 + 标题 + 场景 tag；展开后：最近一次回报的 summary / next / 时间、交付物文件列表 |
+| 黑板文件 | 每张卡片可切 `plan.md` / `sources.md` / `mark1-status.json` 三个 tab 直接读原文 |
+| 追加指令 | 卡片内联输入框，走 `mark1_wake_ticket` 的等价路径，不重开 worker 上下文 |
+| 停止 | 两段式确认（3 秒内点第二次才真停），调 `sessionController.cancel` 并回报路由 |
+| 场景包 | 折叠区，列出当前注册的场景及触发词 |
+
+前后端只走一条通道：浏览器 `POST /api/mark1`，body `{ endpoint, payload }`，响应信封 `{ ok: true, value }` / `{ ok: false, error: { code, message } }`。端点有 `board` / `file` / `wake` / `stop` / `rename`。路由用 `ctx.effect` 包着注册，热重载时能干净卸载。
+
+### 改 UI 的开发流程
+
+UI 源码在 `src/client/`（`index.js` 注册 slot、`board.js` 看板、`rpc.js` 通道、`styles.js` 样式），**手写 `createElement`，不用 JSX**，因为宿主只允许 `require` 十个静态模块（`react` / `react-dom` / `zod` / `client-ui-primitives` 等），任何打包器都会把 primitives 连带 clsx/shiki 内联进来而炸掉。`scripts/build-client.mjs` 只做一件事：把源码原样包进 `window.__ModuleLoader__.load({ id, factory })` 外壳。
+
+```bash
+npm run build   # src/client/*.js → client.js（不内联任何宿主模块）
+npm run check   # build + 契约自检
+```
+
+`npm run check` 会核对：host 快照返回的键与 client 读取的键一致、两端端点集合一致、路由常量一致、client 的 import 全在宿主白名单内、tab kind 与注册 key 一致。改完 UI 必须重启 DSH Desktop 才生效（client bundle 没有 HMR）。
+
+### 一个平台事实
+
+右栏 tab 的组件**拿不到 sessionId**：`sidebar.right.pane.tab` 渲染时 ownerProps 恒为 `{}`，`inject()` 的首参是 `binding.key`（即 tab kind）而不是会话 id。所以看板不依赖 sessionId 工作，只少一个「· 当前」标注。
+
 ## 安装
 
 这是一个 DSH bundle（`@local/dsh-mark-one-v5`），在 desktop profile 里以 `link:` 方式挂载即可，改完不用重装：
@@ -119,9 +154,18 @@ node --check index.js && node --input-type=module -e "import('./index.js').then(
 
 ```
 mark1/
-├── index.js                  # 插件主体（611 行）：Router/Worker/Watchdog 三个预设 + 四个工具 + 黑板
+├── index.js                  # 插件主体（host 端）：Router/Worker/Watchdog 三个预设 + 四个工具 + 黑板 + /api/mark1
 ├── scenes.js                 # 场景包注入：把 skills/<id>/SKILL.md 注册成运行时技能
 ├── cordis.patch.yml          # bundle 补丁：insert mark-one + 三条 agent-preset（order 30/31/32）
+├── src/client/               # 浏览器端 UI 源码（手写 createElement，不用 JSX）
+│   ├── index.js              #   slot 注册：会话头按钮 / 右栏看板 tab / tab 标题条
+│   ├── board.js              #   看板主体：工单卡片、黑板文件、追加指令、停止
+│   ├── rpc.js                #   /api/mark1 通道
+│   └── styles.js             #   .mark1-* 样式
+├── client.js                 # 构建产物（npm run build 生成，勿手改）
+├── scripts/
+│   ├── build-client.mjs      # 把 src/client/*.js 包进 __ModuleLoader__.load 外壳
+│   └── check-client.mjs      # 契约自检：host 返回什么 vs client 读什么
 ├── skills/
 │   └── mark1-research/       # 首个场景包：课题研究报告（定界→取证→搭框架→带来源的稿子）
 │       └── SKILL.md
