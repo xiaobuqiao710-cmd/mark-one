@@ -1,0 +1,27 @@
+{
+  "name": "@local/dsh-mark-one-v5",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "马克一号：通用 super-agent 底座 —— 常驻 Router + 隔离 Worker + 事件驱动触发 + 记忆中台。",
+  "exports": {
+    ".": "./index.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./locale/*.json": "./locale/*.json",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "icon.svg",
+    "index.js",
+    "scenes.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "skills/**"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "icon": "./icon.svg"
+}

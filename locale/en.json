@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Mark One",
+    "description": "A purpose-agnostic super-agent base: a resident router that understands and dispatches, isolated workers that carry long autonomous runs, a shared-file blackboard, and a watchdog that catches drift. First scenario pack: research reports."
+  }
+}
